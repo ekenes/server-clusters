@@ -6,3 +6,10 @@ body,
   height: 100%;
   width: 100%;
 }
+
+#sliderDiv {
+  padding: 10px;
+  background-color: white;
+  width: 300px;
+  height: 50px;
+}
