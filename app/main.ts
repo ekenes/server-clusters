@@ -76,7 +76,7 @@ import Slider from "@arcgis/core/widgets/Slider";
       clusterTolerance: view.resolution * clusterRadius *10
     };
 
-    console.log("VIEW RESOULTION: ", view.resolution);
+    console.log("VIEW RESOULTION: ", view.resolution, " (zoom ", view.zoom, ")");
 
     // const requestUrl = `${layer.url}/${layer.layerId}/query?where=1%3D1&geohash=&outFields=*&returnGeometry=true&lod=${lod}&returnClusters=${returnClusters}&clusterParameters=&f=json`;
 
@@ -170,6 +170,7 @@ import Slider from "@arcgis/core/widgets/Slider";
               return label;
             `
           },
+          deconflictionStrategy: "none",
           labelPlacement: "center-center",
           symbol: new TextSymbol({
             color: [240,240,240, 1],
@@ -214,7 +215,7 @@ import Slider from "@arcgis/core/widgets/Slider";
   let queryClustersPromise: Promise<FeatureLayer>;
 
   async function updateClusterLayer(forceUpdate?: boolean) {
-    const lod = Math.floor(view.zoom);
+    const lod = Math.round(view.zoom);
     const clusterRadius = slider.values[0];
 
     if(zoom !== lod || forceUpdate){
