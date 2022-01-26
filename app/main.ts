@@ -5,13 +5,14 @@ import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import request from "@arcgis/core/request";
 import Graphic from "@arcgis/core/Graphic";
 import Field from "@arcgis/core/layers/support/Field";
-import { createContinuousRenderer } from "@arcgis/core/smartMapping/renderers/size";
+import * as sizeRendererCreator from "@arcgis/core/smartMapping/renderers/size";
+import * as colorRendererCreator from "@arcgis/core/smartMapping/renderers/color";
 import { getSchemes } from "@arcgis/core/smartMapping/symbology/size";
 import LabelClass from "@arcgis/core/layers/support/LabelClass";
 import TextSymbol from "@arcgis/core/symbols/TextSymbol";
 import SimpleRenderer from "@arcgis/core/renderers/SimpleRenderer";
 import PopupTemplate from "@arcgis/core/PopupTemplate";
-import { SimpleMarkerSymbol } from "@arcgis/core/symbols";
+import { SimpleFillSymbol, SimpleMarkerSymbol } from "@arcgis/core/symbols";
 import SpatialReference from "@arcgis/core/geometry/SpatialReference";
 import Slider from "@arcgis/core/widgets/Slider";
 // import { watch } from "@arcgis/core/core/watchUtils";
@@ -61,6 +62,13 @@ import Slider from "@arcgis/core/widgets/Slider";
     lod: number;
     clusterRadius: number;
     clusterLayer?: FeatureLayer;
+  }
+
+  interface QueryBinParams {
+    layer: FeatureLayer;
+    view: MapView;
+    lod: number;
+    binLayer?: FeatureLayer;
   }
 
   async function queryClusters(params: QueryClusterParams): Promise<FeatureLayer>{
@@ -196,7 +204,7 @@ import Slider from "@arcgis/core/widgets/Slider";
     sizeScheme.minSize = 16;
     sizeScheme.maxSize = 45;
 
-    const { renderer } = await createContinuousRenderer({
+    const { renderer } = await sizeRendererCreator.createContinuousRenderer({
       layer: clusterLayer,
       field: "Count",
       view,
@@ -207,12 +215,173 @@ import Slider from "@arcgis/core/widgets/Slider";
     return clusterLayer;
   }
 
+  async function queryBins(params: QueryBinParams): Promise<FeatureLayer>{
+
+    const { layer, view, lod, binLayer } = params;
+
+    if (lod > 5){
+      if (binLayer){
+        return binLayer;
+      } else {
+        throw new Error("Please specify a valid LOD.");
+      }
+    }
+
+    // https://services.arcgis.com/V6ZHFr6zdgNZuVG0/ArcGIS/rest/services/EMU_Top_for_clustering/FeatureServer/0/query?where=1%3D1&objectIds=&time=&geometry=&geometryType=esriGeometryEnvelope&geohash=&inSR=&spatialRel=esriSpatialRelIntersects&resultType=none&distance=0.0&units=esriSRUnit_Meter&returnGeodetic=false&outFields=&returnGeometry=true&featureEncoding=esriDefault&multipatchOption=xyFootprint&maxAllowableOffset=&geometryPrecision=&outSR=&datumTransformation=&applyVCSProjection=false&returnIdsOnly=false&returnUniqueIdsOnly=false&returnCountOnly=false&returnExtentOnly=false&returnQueryGeometry=false&returnDistinctValues=false&cacheHint=false&orderByFields=&groupByFieldsForStatistics=&outStatistics=&having=&resultOffset=&resultRecordCount=&lod=2&returnClusters=false&clusterParameters=&returnZ=false&returnM=false&returnExceededLimitFeatures=true&quantizationParameters=&sqlFormat=none&f=html&token=
+
+    const base = `${layer.url}/${layer.layerId}/query`;
+
+    const returnClusters = false;
+
+    console.log("VIEW RESOULTION: ", view.resolution, " (zoom ", view.zoom, ")");
+
+    // const requestUrl = `${layer.url}/${layer.layerId}/query?where=1%3D1&geohash=&outFields=*&returnGeometry=true&lod=${lod}&returnClusters=${returnClusters}&clusterParameters=&f=json`;
+
+    // const { data } = await request(requestUrl);
+
+    let features: Array<any> = [];
+    let source: Graphic[] = [];
+    let data: any = {};
+    let exceededLimit: boolean = true;
+    let oidField = null;
+
+    for (let oid = 0; exceededLimit; oid) {
+      const response = await request(base, {
+        responseType: "json",
+        query: {
+          where: oidField ? `${oidField} > ${oid}` : "1=1",
+          outFields: ["*"],
+          returnGeometry: true,
+          lod: lod > 5 ? 5 : lod,
+          returnClusters: returnClusters,
+          returnExceededLimitFeatures: true,
+          f: "json"
+        }
+      });
+      data = response.data;
+      console.log(data);
+
+      features = [ ...features, ...data.features ];
+      oidField = data.objectIdFieldName;
+      exceededLimit = false // data?.exceededTransferLimit && oid !== features[features.length-1].attributes[oidField];  // false
+      oid = features[features.length-1].attributes[oidField];
+    }
+
+    source = features.map( (featureJSON: any) => {
+      featureJSON.geometry.spatialReference = data.spatialReference;
+      return Graphic.fromJSON(featureJSON);
+    });
+
+    if(binLayer){
+      const ids = await binLayer.queryObjectIds();
+      await binLayer.applyEdits({
+        deleteFeatures: ids.map(id => {
+          return {
+            objectId: id
+          }
+        }),
+        addFeatures: [...source]
+      });
+      binLayer.renderer = await createBinRenderer(binLayer);
+      return binLayer;
+    }
+
+    const schema = {
+      geometryType: "polygon",
+      objectIdField: data.objectIdFieldName,
+      spatialReference: SpatialReference.fromJSON(data.spatialReference),
+      fields: data.fields.map((fieldJSON: any) => Field.fromJSON(fieldJSON))
+    };
+
+    const aggregateLayer = new FeatureLayer({
+      ...schema,
+      source,
+      renderer: new SimpleRenderer({
+        symbol: new SimpleFillSymbol()
+      }),
+      popupTemplate: new PopupTemplate({
+        title: "Geohash: {CellId}",
+        content: [{
+          type: "text",
+          text: "This bin contains <b>{Count}</b> features."
+        }, {
+          type: "fields"
+        }],
+        fieldInfos: [{
+          fieldName: "Count",
+          format: {
+            digitSeparator: true,
+            places: 0
+          }
+        }, {
+          fieldName: "cluster_avg_temp",
+          format: {
+            digitSeparator: true,
+            places: 1
+          }
+        }, {
+          fieldName: "cluster_avg_salinity",
+          format: {
+            digitSeparator: true,
+            places: 1
+          }
+        }]
+      }),
+      popupEnabled: true,
+      labelingInfo: [
+        new LabelClass({
+          labelExpressionInfo: {
+            expression: `
+              var value = $feature["Count"];
+              var num = Count(Text(Round(value)));
+              var label = When(
+                num < 4, Text(value, "#"),
+                num == 4, Text(value / Pow(10, 3), "#.#k"),
+                num <= 6, Text(value / Pow(10, 3), "#k"),
+                num == 7, Text(value / Pow(10, 6), "#.#m"),
+                num > 7, Text(value / Pow(10, 6), "#m"),
+                Text(value, "#,###")
+              );
+              return label;
+            `
+          },
+          deconflictionStrategy: "none",
+          labelPlacement: "center-center",
+          symbol: new TextSymbol({
+            color: [240,240,240, 1],
+            haloSize: 0.75,
+            haloColor: [55,56,55, 0.9],
+            font: {
+              family: "Noto Sans",
+              size: 7.5,
+              weight: "bold"
+            }
+          })
+        })
+      ]
+    } as any);
+
+    aggregateLayer.renderer = await createBinRenderer(aggregateLayer);
+    return aggregateLayer;
+  }
+
+  async function createBinRenderer(layer: FeatureLayer): Promise<__esri.ClassBreaksRenderer> {
+    const { renderer } = await colorRendererCreator.createContinuousRenderer({
+      layer,
+      field: "Count",  // Count | cluster_avg_temp | cluster_avg_salinity
+      view
+    });
+    return renderer;
+  }
+
   await view.when();
   await layer.when();
 
   let clusterLayer: FeatureLayer;
+  let binLayer: FeatureLayer;
   let zoom: number = 0;
   let queryClustersPromise: Promise<FeatureLayer>;
+  let queryBinsPromise: Promise<FeatureLayer>;
 
   async function updateClusterLayer(forceUpdate?: boolean) {
     const lod = Math.round(view.zoom);
@@ -230,13 +399,41 @@ import Slider from "@arcgis/core/widgets/Slider";
     }
   }
 
-  updateClusterLayer();
-  view.watch("center", () => { updateClusterLayer() });
-  slider.on(["thumb-drag", "thumb-change"] as any, (event:any) => {
-    if(event?.state === "stop" || event.type === "thumb-change"){
-      console.log("update???");
-      updateClusterLayer(true);
+  async function updateBinLayer(forceUpdate?: boolean) {
+    const viewZoom = Math.floor(view.zoom);
+    const lod =
+      viewZoom > 4 ? 4 :
+      viewZoom > 3 ? 3 :
+      viewZoom;
+
+    if(zoom !== lod || forceUpdate){
+      zoom = lod;
+      if(!binLayer){
+        queryBinsPromise = queryBins({ layer, view, lod });
+        binLayer = await queryBinsPromise;
+        view.map.add(binLayer);
+        return;
+      }
+      await queryBins({ layer, view, lod, binLayer })
     }
-  })
+  }
+
+  // updateClusterLayer();
+  updateBinLayer();
+  view.watch("center", () => {
+    var i = 1;
+
+    if(i === 1){
+      updateBinLayer();
+    } else {
+      updateClusterLayer();
+    }
+  });
+  // slider.on(["thumb-drag", "thumb-change"] as any, (event:any) => {
+  //   if(event?.state === "stop" || event.type === "thumb-change"){
+  //     console.log("update???");
+  //     updateClusterLayer(true);
+  //   }
+  // });
 
 })();
