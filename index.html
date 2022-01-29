@@ -6,11 +6,17 @@
     <title>Server clusters</title>
     <link rel="stylesheet" href="/app/main.css">
     <link rel="stylesheet" href="https://js.arcgis.com/4.22/@arcgis/core/assets/esri/themes/light/main.css">
+    <script type="module" src="https://js.arcgis.com/calcite-components/1.0.0-beta.74/calcite.esm.js"></script>
+<link rel="stylesheet" type="text/css" href="https://js.arcgis.com/calcite-components/1.0.0-beta.74/calcite.css" />
   </head>
   <body>
     <div id="viewDiv"></div>
-    <div id="sliderDiv">
-      <div id="slider"></div>
+    <div id="components">
+      <div id="sliderDiv">
+        <div id="slider"></div>
+      </div>
+      <calcite-label>Clustering enabled<calcite-switch id="clustering-enabled" scale="m"></calcite-switch>
+      </calcite-label>
     </div>
     <script type="module" src="/app/main.ts"></script>
   </body>

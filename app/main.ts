@@ -22,14 +22,14 @@ import Slider from "@arcgis/core/widgets/Slider";
   // const url = "https://services.arcgis.com/V6ZHFr6zdgNZuVG0/ArcGIS/rest/services/EMU_Top_for_clustering/FeatureServer/0";
   const url = "https://servicesdev.arcgis.com/VdB0O4Dy5MyNfFTR/ArcGIS/rest/services/EMU_Top_for_clustering/FeatureServer/0/";
 
-  const layer = new FeatureLayer({
+  const pointLayer = new FeatureLayer({
     url,
     minScale: 6737670
   })
 
   const map = new ArcGISMap({
     basemap: "streets-vector",
-    layers: [ layer ]
+    layers: [ pointLayer ]
   });
 
   const view = new MapView({
@@ -42,11 +42,13 @@ import Slider from "@arcgis/core/widgets/Slider";
     }
   });
 
+  const clusteringEnabledElement = document.getElementById("clustering-enabled") as HTMLInputElement;
+
   const slider = new Slider({
     values: [0],
     min: 0,
-    max: 100,
-    steps: 0.1,
+    max: 200,
+    steps: 10,
     container: "slider",
     visibleElements: {
       labels: true,
@@ -54,41 +56,37 @@ import Slider from "@arcgis/core/widgets/Slider";
     }
   });
 
-  view.ui.add("sliderDiv", "top-right");
+  view.ui.add("components", "top-right");
 
   interface QueryClusterParams {
-    layer: FeatureLayer;
+    pointLayer: FeatureLayer;
     view: MapView;
-    lod: number;
-    clusterRadius: number;
-    clusterLayer?: FeatureLayer;
+    returnClusters?: boolean;
+    clusterRadius?: number;
+    aggregateLayer?: FeatureLayer;
   }
 
-  interface QueryBinParams {
-    layer: FeatureLayer;
-    view: MapView;
-    lod: number;
-    binLayer?: FeatureLayer;
-  }
+  async function queryAggregates(params: QueryClusterParams): Promise<FeatureLayer>{
 
-  async function queryClusters(params: QueryClusterParams): Promise<FeatureLayer>{
+    let { pointLayer, view, clusterRadius, returnClusters, aggregateLayer } = params;
 
-    const { layer, view, lod, clusterRadius } = params;
+    const base = `${pointLayer.url}/${pointLayer.layerId}/query`;
 
-    // https://services.arcgis.com/V6ZHFr6zdgNZuVG0/ArcGIS/rest/services/EMU_Top_for_clustering/FeatureServer/0/query?where=1%3D1&objectIds=&time=&geometry=&geometryType=esriGeometryEnvelope&geohash=&inSR=&spatialRel=esriSpatialRelIntersects&resultType=none&distance=0.0&units=esriSRUnit_Meter&returnGeodetic=false&outFields=&returnGeometry=true&featureEncoding=esriDefault&multipatchOption=xyFootprint&maxAllowableOffset=&geometryPrecision=&outSR=&datumTransformation=&applyVCSProjection=false&returnIdsOnly=false&returnUniqueIdsOnly=false&returnCountOnly=false&returnExtentOnly=false&returnQueryGeometry=false&returnDistinctValues=false&cacheHint=false&orderByFields=&groupByFieldsForStatistics=&outStatistics=&having=&resultOffset=&resultRecordCount=&lod=2&returnClusters=false&clusterParameters=&returnZ=false&returnM=false&returnExceededLimitFeatures=true&quantizationParameters=&sqlFormat=none&f=html&token=
+    const viewZoom = Math.floor(view.zoom);
+    const lod =
+      viewZoom > 4 ? 4 :
+      viewZoom > 3 ? 3 :
+      viewZoom;
 
-    const base = `${layer.url}/${layer.layerId}/query`;
+    const geometryType = returnClusters ? "point" : "polygon";
 
-    const returnClusters = true;
+    if(!clusterRadius){
+      clusterRadius = 0;
+    }
+
     const clusterParameters = {
-      clusterTolerance: view.resolution * clusterRadius *10
+      clusterTolerance: Math.round(view.resolution * clusterRadius)
     };
-
-    console.log("VIEW RESOULTION: ", view.resolution, " (zoom ", view.zoom, ")");
-
-    // const requestUrl = `${layer.url}/${layer.layerId}/query?where=1%3D1&geohash=&outFields=*&returnGeometry=true&lod=${lod}&returnClusters=${returnClusters}&clusterParameters=&f=json`;
-
-    // const { data } = await request(requestUrl);
 
     let features: Array<any> = [];
     let source: Graphic[] = [];
@@ -105,7 +103,7 @@ import Slider from "@arcgis/core/widgets/Slider";
           returnGeometry: true,
           lod: lod,
           returnClusters: returnClusters,
-          clusterParameters: clusterRadius === 0 ? null : JSON.stringify(clusterParameters),
+          clusterParameters: returnClusters && clusterRadius > 0 ? JSON.stringify(clusterParameters) : null,
           returnExceededLimitFeatures: true,
           f: "json"
         }
@@ -124,9 +122,9 @@ import Slider from "@arcgis/core/widgets/Slider";
       return Graphic.fromJSON(featureJSON);
     });
 
-    if(params.clusterLayer){
-      const ids = await params.clusterLayer.queryObjectIds();
-      await params.clusterLayer.applyEdits({
+    if(aggregateLayer){
+      const ids = await aggregateLayer.queryObjectIds();
+      await aggregateLayer.applyEdits({
         deleteFeatures: ids.map(id => {
           return {
             objectId: id
@@ -134,21 +132,21 @@ import Slider from "@arcgis/core/widgets/Slider";
         }),
         addFeatures: [...source]
       });
-      return params.clusterLayer;
+      return aggregateLayer;
     }
 
     const schema = {
-      geometryType: "point",
+      geometryType,
       objectIdField: data.objectIdFieldName,
       spatialReference: SpatialReference.fromJSON(data.spatialReference),
       fields: data.fields.map((fieldJSON: any) => Field.fromJSON(fieldJSON))
     };
 
-    const clusterLayer = new FeatureLayer({
+    aggregateLayer = new FeatureLayer({
       ...schema,
       source,
       renderer: new SimpleRenderer({
-        symbol: new SimpleMarkerSymbol()
+        symbol: returnClusters ? new SimpleMarkerSymbol() : new SimpleFillSymbol()
       }),
       popupTemplate: new PopupTemplate({
         content: "This cluster represents <b>{Count}</b> features.",
@@ -179,7 +177,7 @@ import Slider from "@arcgis/core/widgets/Slider";
             `
           },
           deconflictionStrategy: "none",
-          labelPlacement: "center-center",
+          labelPlacement: returnClusters ? "center-center" : "always-horizontal",
           symbol: new TextSymbol({
             color: [240,240,240, 1],
             haloSize: 0.75,
@@ -194,174 +192,8 @@ import Slider from "@arcgis/core/widgets/Slider";
       ]
     } as any);
 
-    const { primaryScheme } = await getSchemes({
-      basemap: view.map.basemap,
-      basemapTheme: "light",
-      geometryType: "point"
-    });
-
-    const sizeScheme = primaryScheme as __esri.SizeSchemeForPoint;
-    sizeScheme.minSize = 16;
-    sizeScheme.maxSize = 45;
-
-    const { renderer } = await sizeRendererCreator.createContinuousRenderer({
-      layer: clusterLayer,
-      field: "Count",
-      view,
-      sizeScheme
-    });
-
-    clusterLayer.renderer = renderer;
-    return clusterLayer;
-  }
-
-  async function queryBins(params: QueryBinParams): Promise<FeatureLayer>{
-
-    const { layer, view, lod, binLayer } = params;
-
-    if (lod > 5){
-      if (binLayer){
-        return binLayer;
-      } else {
-        throw new Error("Please specify a valid LOD.");
-      }
-    }
-
-    // https://services.arcgis.com/V6ZHFr6zdgNZuVG0/ArcGIS/rest/services/EMU_Top_for_clustering/FeatureServer/0/query?where=1%3D1&objectIds=&time=&geometry=&geometryType=esriGeometryEnvelope&geohash=&inSR=&spatialRel=esriSpatialRelIntersects&resultType=none&distance=0.0&units=esriSRUnit_Meter&returnGeodetic=false&outFields=&returnGeometry=true&featureEncoding=esriDefault&multipatchOption=xyFootprint&maxAllowableOffset=&geometryPrecision=&outSR=&datumTransformation=&applyVCSProjection=false&returnIdsOnly=false&returnUniqueIdsOnly=false&returnCountOnly=false&returnExtentOnly=false&returnQueryGeometry=false&returnDistinctValues=false&cacheHint=false&orderByFields=&groupByFieldsForStatistics=&outStatistics=&having=&resultOffset=&resultRecordCount=&lod=2&returnClusters=false&clusterParameters=&returnZ=false&returnM=false&returnExceededLimitFeatures=true&quantizationParameters=&sqlFormat=none&f=html&token=
-
-    const base = `${layer.url}/${layer.layerId}/query`;
-
-    const returnClusters = false;
-
-    console.log("VIEW RESOULTION: ", view.resolution, " (zoom ", view.zoom, ")");
-
-    // const requestUrl = `${layer.url}/${layer.layerId}/query?where=1%3D1&geohash=&outFields=*&returnGeometry=true&lod=${lod}&returnClusters=${returnClusters}&clusterParameters=&f=json`;
-
-    // const { data } = await request(requestUrl);
-
-    let features: Array<any> = [];
-    let source: Graphic[] = [];
-    let data: any = {};
-    let exceededLimit: boolean = true;
-    let oidField = null;
-
-    for (let oid = 0; exceededLimit; oid) {
-      const response = await request(base, {
-        responseType: "json",
-        query: {
-          where: oidField ? `${oidField} > ${oid}` : "1=1",
-          outFields: ["*"],
-          returnGeometry: true,
-          lod: lod > 5 ? 5 : lod,
-          returnClusters: returnClusters,
-          returnExceededLimitFeatures: true,
-          f: "json"
-        }
-      });
-      data = response.data;
-      console.log(data);
-
-      features = [ ...features, ...data.features ];
-      oidField = data.objectIdFieldName;
-      exceededLimit = false // data?.exceededTransferLimit && oid !== features[features.length-1].attributes[oidField];  // false
-      oid = features[features.length-1].attributes[oidField];
-    }
-
-    source = features.map( (featureJSON: any) => {
-      featureJSON.geometry.spatialReference = data.spatialReference;
-      return Graphic.fromJSON(featureJSON);
-    });
-
-    if(binLayer){
-      const ids = await binLayer.queryObjectIds();
-      await binLayer.applyEdits({
-        deleteFeatures: ids.map(id => {
-          return {
-            objectId: id
-          }
-        }),
-        addFeatures: [...source]
-      });
-      binLayer.renderer = await createBinRenderer(binLayer);
-      return binLayer;
-    }
-
-    const schema = {
-      geometryType: "polygon",
-      objectIdField: data.objectIdFieldName,
-      spatialReference: SpatialReference.fromJSON(data.spatialReference),
-      fields: data.fields.map((fieldJSON: any) => Field.fromJSON(fieldJSON))
-    };
-
-    const aggregateLayer = new FeatureLayer({
-      ...schema,
-      source,
-      renderer: new SimpleRenderer({
-        symbol: new SimpleFillSymbol()
-      }),
-      popupTemplate: new PopupTemplate({
-        title: "Geohash: {CellId}",
-        content: [{
-          type: "text",
-          text: "This bin contains <b>{Count}</b> features."
-        }, {
-          type: "fields"
-        }],
-        fieldInfos: [{
-          fieldName: "Count",
-          format: {
-            digitSeparator: true,
-            places: 0
-          }
-        }, {
-          fieldName: "cluster_avg_temp",
-          format: {
-            digitSeparator: true,
-            places: 1
-          }
-        }, {
-          fieldName: "cluster_avg_salinity",
-          format: {
-            digitSeparator: true,
-            places: 1
-          }
-        }]
-      }),
-      popupEnabled: true,
-      labelingInfo: [
-        new LabelClass({
-          labelExpressionInfo: {
-            expression: `
-              var value = $feature["Count"];
-              var num = Count(Text(Round(value)));
-              var label = When(
-                num < 4, Text(value, "#"),
-                num == 4, Text(value / Pow(10, 3), "#.#k"),
-                num <= 6, Text(value / Pow(10, 3), "#k"),
-                num == 7, Text(value / Pow(10, 6), "#.#m"),
-                num > 7, Text(value / Pow(10, 6), "#m"),
-                Text(value, "#,###")
-              );
-              return label;
-            `
-          },
-          deconflictionStrategy: "none",
-          labelPlacement: "center-center",
-          symbol: new TextSymbol({
-            color: [240,240,240, 1],
-            haloSize: 0.75,
-            haloColor: [55,56,55, 0.9],
-            font: {
-              family: "Noto Sans",
-              size: 7.5,
-              weight: "bold"
-            }
-          })
-        })
-      ]
-    } as any);
-
-    aggregateLayer.renderer = await createBinRenderer(aggregateLayer);
+    const renderer = returnClusters ? await createClusterRenderer(aggregateLayer) : await createBinRenderer(aggregateLayer);
+    aggregateLayer.renderer = renderer;
     return aggregateLayer;
   }
 
@@ -374,66 +206,70 @@ import Slider from "@arcgis/core/widgets/Slider";
     return renderer;
   }
 
+  async function createClusterRenderer(layer: FeatureLayer): Promise<__esri.ClassBreaksRenderer> {
+    const { primaryScheme } = await getSchemes({
+      basemap: view.map.basemap,
+      basemapTheme: "light",
+      geometryType: "point",
+    });
+
+    const sizeScheme = primaryScheme as __esri.SizeSchemeForPoint;
+    sizeScheme.minSize = 16;
+    sizeScheme.maxSize = 45;
+
+    const { renderer } = await sizeRendererCreator.createContinuousRenderer({
+      layer,
+      field: "Count",
+      view,
+      sizeScheme
+    });
+    return renderer;
+  }
+
   await view.when();
-  await layer.when();
+  await pointLayer.when();
 
-  let clusterLayer: FeatureLayer;
-  let binLayer: FeatureLayer;
+  let aggregateLayer: FeatureLayer | null;
   let zoom: number = 0;
-  let queryClustersPromise: Promise<FeatureLayer>;
-  let queryBinsPromise: Promise<FeatureLayer>;
 
-  async function updateClusterLayer(forceUpdate?: boolean) {
+  async function updateAggregateLayer(forceUpdate?: boolean) {
     const lod = Math.round(view.zoom);
+    const returnClusters = clusteringEnabledElement.checked;
     const clusterRadius = slider.values[0];
 
-    if(zoom !== lod || forceUpdate){
-      zoom = lod;
-      if(!clusterLayer){
-        queryClustersPromise = queryClusters({ layer, view, lod, clusterRadius });
-        clusterLayer = await queryClustersPromise;
-        view.map.add(clusterLayer);
-        return;
-      }
-      await queryClusters({ layer, view, lod, clusterRadius, clusterLayer })
+    if(aggregateLayer?.geometryType !== (returnClusters ? "point" : "polygon")){
+      view.map.remove(aggregateLayer as FeatureLayer);
+      aggregateLayer = null;
     }
-  }
-
-  async function updateBinLayer(forceUpdate?: boolean) {
-    const viewZoom = Math.floor(view.zoom);
-    const lod =
-      viewZoom > 4 ? 4 :
-      viewZoom > 3 ? 3 :
-      viewZoom;
 
     if(zoom !== lod || forceUpdate){
       zoom = lod;
-      if(!binLayer){
-        queryBinsPromise = queryBins({ layer, view, lod });
-        binLayer = await queryBinsPromise;
-        view.map.add(binLayer);
+      if(!aggregateLayer){
+        aggregateLayer = await queryAggregates({
+          pointLayer,
+          view,
+          returnClusters,
+          clusterRadius
+        });
+        view.map.add(aggregateLayer);
         return;
       }
-      await queryBins({ layer, view, lod, binLayer })
+      await queryAggregates({ pointLayer, view, returnClusters, clusterRadius, aggregateLayer });
     }
   }
 
-  // updateClusterLayer();
-  updateBinLayer();
-  view.watch("center", () => {
-    var i = 1;
-
-    if(i === 1){
-      updateBinLayer();
-    } else {
-      updateClusterLayer();
+  updateAggregateLayer();
+  view.watch("scale", () => {
+    updateAggregateLayer();
+  });
+  slider.on(["thumb-drag", "thumb-change"] as any, (event:any) => {
+    if(event?.state === "stop" || event.type === "thumb-change"){
+      console.log("update???");
+      updateAggregateLayer(true);
     }
   });
-  // slider.on(["thumb-drag", "thumb-change"] as any, (event:any) => {
-  //   if(event?.state === "stop" || event.type === "thumb-change"){
-  //     console.log("update???");
-  //     updateClusterLayer(true);
-  //   }
-  // });
+  clusteringEnabledElement.addEventListener("calciteSwitchChange", ()=> {
+    updateAggregateLayer(true);
+  });
 
 })();
