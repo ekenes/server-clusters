@@ -93,6 +93,12 @@ import Slider from "@arcgis/core/widgets/Slider";
     let data: any = {};
     let exceededLimit: boolean = true;
     let oidField = null;
+    let ids = [];
+
+    if(aggregateLayer){
+      ids = await aggregateLayer.queryObjectIds();
+      console.log(ids);
+    }
 
     for (let oid = 0; exceededLimit; oid) {
       const response = await request(base, {
@@ -113,7 +119,7 @@ import Slider from "@arcgis/core/widgets/Slider";
 
       features = [ ...features, ...data.features ];
       oidField = data.objectIdFieldName;
-      exceededLimit = data?.exceededTransferLimit && oid !== features[features.length-1].attributes[oidField];  // false
+      exceededLimit = false//data?.exceededTransferLimit && oid !== features[features.length-1].attributes[oidField];  // false
       oid = features[features.length-1].attributes[oidField];
     }
 
@@ -132,6 +138,8 @@ import Slider from "@arcgis/core/widgets/Slider";
         }),
         addFeatures: [...source]
       });
+      const renderer = returnClusters ? await createClusterRenderer(aggregateLayer) : await createBinRenderer(aggregateLayer);
+      aggregateLayer.renderer = renderer;
       return aggregateLayer;
     }
 
@@ -149,12 +157,32 @@ import Slider from "@arcgis/core/widgets/Slider";
         symbol: returnClusters ? new SimpleMarkerSymbol() : new SimpleFillSymbol()
       }),
       popupTemplate: new PopupTemplate({
-        content: "This cluster represents <b>{Count}</b> features.",
+        title: "Geohash: {CellId}",
+        content: [{
+          type: "text",
+          text: "This cluster represents <b>{Count}</b> features."
+        }, {
+          type: "fields"
+        }],
         fieldInfos: [{
           fieldName: "Count",
           format: {
             digitSeparator: true,
             places: 0
+          }
+        }, {
+          fieldName: "cluster_avg_temp",
+          label: "Average Temperature",
+          format: {
+            digitSeparator: true,
+            places: 1
+          }
+        }, {
+          fieldName: "cluster_avg_salinity",
+          label: "Average Salinity",
+          format: {
+            digitSeparator: true,
+            places: 1
           }
         }]
       }),
@@ -261,6 +289,9 @@ import Slider from "@arcgis/core/widgets/Slider";
   updateAggregateLayer();
   view.watch("scale", () => {
     updateAggregateLayer();
+    console.log(view.size)  // width, height
+    console.log(view.extent)
+    console.log(view.resolution)
   });
   slider.on(["thumb-drag", "thumb-change"] as any, (event:any) => {
     if(event?.state === "stop" || event.type === "thumb-change"){
