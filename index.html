@@ -17,6 +17,19 @@
       </div>
       <calcite-label>Clustering enabled<calcite-switch id="clustering-enabled" scale="m"></calcite-switch>
       </calcite-label>
+      <div>
+        <calcite-select id="variable-select">
+          <calcite-option-group label="field">
+              <calcite-option value="Count" selected>Count</calcite-option>
+              <calcite-option value="total_injured">Total injured</calcite-option>
+              <calcite-option value="total_killed">Total killed</calcite-option>
+              <calcite-option value="pedestrians_killed">Pedestrians killed</calcite-option>
+              <calcite-option value="cyclists_killed">Cyclists killed</calcite-option>
+              <calcite-option value="motorists_killed">Motorists killed</calcite-option>
+              <calcite-option value="predominance">Predominance</calcite-option>
+          </calcite-option-group>
+      </calcite-select>
+      </div>
     </div>
     <script type="module" src="/app/main.ts"></script>
   </body>

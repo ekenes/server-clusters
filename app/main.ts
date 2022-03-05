@@ -1,4 +1,4 @@
-import ArcGISMap from "@arcgis/core/Map";
+import ArcGISMap from "@arcgis/core/WebMap";
 import MapView from "@arcgis/core/views/MapView";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 // import { executeQueryJSON } from "@arcgis/core/rest/query";
@@ -7,7 +7,9 @@ import Graphic from "@arcgis/core/Graphic";
 import Field from "@arcgis/core/layers/support/Field";
 import * as sizeRendererCreator from "@arcgis/core/smartMapping/renderers/size";
 import * as colorRendererCreator from "@arcgis/core/smartMapping/renderers/color";
+import * as predominanceRendererCreator from "@arcgis/core/smartMapping/renderers/predominance";
 import { getSchemes } from "@arcgis/core/smartMapping/symbology/size";
+import { getSchemeByName } from "@arcgis/core/smartMapping/symbology/color";
 import LabelClass from "@arcgis/core/layers/support/LabelClass";
 import TextSymbol from "@arcgis/core/symbols/TextSymbol";
 import SimpleRenderer from "@arcgis/core/renderers/SimpleRenderer";
@@ -15,20 +17,78 @@ import PopupTemplate from "@arcgis/core/PopupTemplate";
 import { SimpleFillSymbol, SimpleMarkerSymbol } from "@arcgis/core/symbols";
 import SpatialReference from "@arcgis/core/geometry/SpatialReference";
 import Slider from "@arcgis/core/widgets/Slider";
+import Legend from "@arcgis/core/widgets/Legend";
 // import { watch } from "@arcgis/core/core/watchUtils";
 
 (async ()=> {
 
   // const url = "https://services.arcgis.com/V6ZHFr6zdgNZuVG0/ArcGIS/rest/services/EMU_Top_for_clustering/FeatureServer/0";
-  const url = "https://servicesdev.arcgis.com/VdB0O4Dy5MyNfFTR/ArcGIS/rest/services/EMU_Top_for_clustering/FeatureServer/0/";
+  // const url = "https://servicesdev.arcgis.com/VdB0O4Dy5MyNfFTR/ArcGIS/rest/services/EMU_Top_for_clustering/FeatureServer/0/";
+  // const url = "https://servicesdev.arcgis.com/f126c8da131543019b05e4bfab6fc6ac/ArcGIS/rest/services/Kansas_Petro_Data/FeatureServer/0";
+  const url = "https://services.arcgis.com/V6ZHFr6zdgNZuVG0/ArcGIS/rest/services/NYC_motor_crashes/FeatureServer/0";
+
+  const scaleThreshold = 20000;
 
   const pointLayer = new FeatureLayer({
     url,
-    minScale: 6737670
+    // portalItem: {
+    //   id: "d38d3496c6884e83b75f66d16102e37a"
+    // },
+    minScale: scaleThreshold,
+    renderer: new SimpleRenderer({
+      symbol: new SimpleMarkerSymbol({
+        color: "#991f17",
+        size: 3,
+        outline: {
+          width: 0
+        }
+      })
+    }),
+    featureReduction: {
+      type: "cluster",
+      clusterMinSize: 16,
+      clusterMaxSize: 48,
+      labelingInfo: [
+        new LabelClass({
+          labelExpressionInfo: {
+            expression: `
+              var value = $feature["cluster_count"];
+              var num = Count(Text(Round(value)));
+              var label = When(
+                num < 4, Text(value, "#"),
+                num == 4, Text(value / Pow(10, 3), "#.#k"),
+                num <= 6, Text(value / Pow(10, 3), "#k"),
+                num == 7, Text(value / Pow(10, 6), "#.#m"),
+                num > 7, Text(value / Pow(10, 6), "#m"),
+                Text(value, "#,###")
+              );
+              return label;
+            `
+          },
+          deconflictionStrategy: "none",
+          labelPlacement: "center-center",
+          symbol: new TextSymbol({
+            color: [240,240,240, 1],
+            haloSize: 0.75,
+            haloColor: [55,56,55, 0.9],
+            font: {
+              family: "Noto Sans",
+              size: 9,
+              weight: "bold"
+            }
+          })
+        })
+      ]
+    }
   })
 
   const map = new ArcGISMap({
-    basemap: "streets-vector",
+    basemap: "gray-vector",
+    // {
+    //   portalItem: {
+    //     id: "9d5cf81cf8ce437584cedc8a2ee4ea4e"
+    //   }
+    // },
     layers: [ pointLayer ]
   });
 
@@ -42,7 +102,10 @@ import Slider from "@arcgis/core/widgets/Slider";
     }
   });
 
+  view.ui.add(new Legend({ view }), "top-left");
+
   const clusteringEnabledElement = document.getElementById("clustering-enabled") as HTMLInputElement;
+  const variableSelectElement = document.getElementById("variable-select") as HTMLSelectElement;
 
   const slider = new Slider({
     values: [0],
@@ -73,8 +136,12 @@ import Slider from "@arcgis/core/widgets/Slider";
     const base = `${pointLayer.url}/${pointLayer.layerId}/query`;
 
     const viewZoom = Math.floor(view.zoom);
+
     const lod =
-      viewZoom > 4 ? 4 :
+      viewZoom > 11 ? 7 :
+      viewZoom > 10 ? 6 :
+      viewZoom > 7 ? 5 :
+      viewZoom > 5 ? 4 :
       viewZoom > 3 ? 3 :
       viewZoom;
 
@@ -119,7 +186,7 @@ import Slider from "@arcgis/core/widgets/Slider";
 
       features = [ ...features, ...data.features ];
       oidField = data.objectIdFieldName;
-      exceededLimit = false//data?.exceededTransferLimit && oid !== features[features.length-1].attributes[oidField];  // false
+      exceededLimit = data?.exceededTransferLimit && oid !== features[features.length-1].attributes[oidField];  // false
       oid = features[features.length-1].attributes[oidField];
     }
 
@@ -140,6 +207,7 @@ import Slider from "@arcgis/core/widgets/Slider";
       });
       const renderer = returnClusters ? await createClusterRenderer(aggregateLayer) : await createBinRenderer(aggregateLayer);
       aggregateLayer.renderer = renderer;
+      aggregateLayer.labelingInfo = createLabelingInfo(returnClusters as boolean);
       return aggregateLayer;
     }
 
@@ -151,11 +219,13 @@ import Slider from "@arcgis/core/widgets/Slider";
     };
 
     aggregateLayer = new FeatureLayer({
+      maxScale: scaleThreshold,
       ...schema,
       source,
       renderer: new SimpleRenderer({
         symbol: returnClusters ? new SimpleMarkerSymbol() : new SimpleFillSymbol()
       }),
+      blendMode: "multiply",
       popupTemplate: new PopupTemplate({
         title: "Geohash: {CellId}",
         content: [{
@@ -170,54 +240,11 @@ import Slider from "@arcgis/core/widgets/Slider";
             digitSeparator: true,
             places: 0
           }
-        }, {
-          fieldName: "cluster_avg_temp",
-          label: "Average Temperature",
-          format: {
-            digitSeparator: true,
-            places: 1
-          }
-        }, {
-          fieldName: "cluster_avg_salinity",
-          label: "Average Salinity",
-          format: {
-            digitSeparator: true,
-            places: 1
-          }
-        }]
+        }
+      ]
       }),
       popupEnabled: true,
-      labelingInfo: [
-        new LabelClass({
-          labelExpressionInfo: {
-            expression: `
-              var value = $feature["Count"];
-              var num = Count(Text(Round(value)));
-              var label = When(
-                num < 4, Text(value, "#"),
-                num == 4, Text(value / Pow(10, 3), "#.#k"),
-                num <= 6, Text(value / Pow(10, 3), "#k"),
-                num == 7, Text(value / Pow(10, 6), "#.#m"),
-                num > 7, Text(value / Pow(10, 6), "#m"),
-                Text(value, "#,###")
-              );
-              return label;
-            `
-          },
-          deconflictionStrategy: "none",
-          labelPlacement: returnClusters ? "center-center" : "always-horizontal",
-          symbol: new TextSymbol({
-            color: [240,240,240, 1],
-            haloSize: 0.75,
-            haloColor: [55,56,55, 0.9],
-            font: {
-              family: "Noto Sans",
-              size: 9,
-              weight: "bold"
-            }
-          })
-        })
-      ]
+      labelingInfo: createLabelingInfo(returnClusters as boolean)
     } as any);
 
     const renderer = returnClusters ? await createClusterRenderer(aggregateLayer) : await createBinRenderer(aggregateLayer);
@@ -225,13 +252,89 @@ import Slider from "@arcgis/core/widgets/Slider";
     return aggregateLayer;
   }
 
-  async function createBinRenderer(layer: FeatureLayer): Promise<__esri.ClassBreaksRenderer> {
+  async function createBinRenderer(layer: FeatureLayer): Promise<__esri.ClassBreaksRenderer | __esri.UniqueValueRenderer> {
+    const field = variableSelectElement.value;
+
+    if(field === "predominance"){
+      const renderer = createPredominanceRenderer(layer);
+      return renderer;
+    }
+
+    const colorScheme = getSchemeByName({
+      geometryType: "polygon",
+      name: "Red 7",  // Pink 6 | Forest Dusk
+      theme: "high-to-low"
+    })
     const { renderer } = await colorRendererCreator.createContinuousRenderer({
       layer,
-      field: "Count",  // Count | cluster_avg_temp | cluster_avg_salinity
-      view
+      field,  // Count | total_killed
+      // normalizationField: "Count",
+      view,
+      theme: "high-to-low",
+      colorScheme
     });
     return renderer;
+  }
+
+  async function createPredominanceRenderer(layer: FeatureLayer): Promise<__esri.UniqueValueRenderer> {
+    // const colorScheme = getSchemeByName({
+    //   geometryType: "polygon",
+    //   name: "Red 7",  // Pink 6 | Forest Dusk
+    //   theme: "high-to-low"
+    // })
+    const { renderer } = await predominanceRendererCreator.createRenderer({
+      layer,
+      view,
+      includeOpacityVariable: true,
+      includeSizeVariable: true,
+      fields: [{
+        name: "pedestrians_killed",
+        label: "Pedestrians killed"
+      }, {
+        name: "cyclists_killed",
+        label: "Cyclists killed"
+      }, {
+        name: "motorists_killed",
+        label: "Motorists killed"
+      }]
+    });
+    return renderer;
+  }
+
+  function createLabelingInfo(returnClusters: boolean): __esri.LabelClass[] {
+    const field = variableSelectElement.value !== "predominance" ? variableSelectElement.value : "total_killed";
+
+    return [
+      new LabelClass({
+        labelExpressionInfo: {
+          expression: `
+            var value = $feature["${field}"];
+            var num = Count(Text(Round(value)));
+            var label = When(
+              num < 4, Text(value, "#"),
+              num == 4, Text(value / Pow(10, 3), "#.#k"),
+              num <= 6, Text(value / Pow(10, 3), "#k"),
+              num == 7, Text(value / Pow(10, 6), "#.#m"),
+              num > 7, Text(value / Pow(10, 6), "#m"),
+              Text(value, "#,###")
+            );
+            return label;
+          `
+        },
+        deconflictionStrategy: "none",
+        labelPlacement: returnClusters ? "center-center" : "always-horizontal",
+        symbol: new TextSymbol({
+          color: [255,255,255, 1],
+          haloSize: 0.5,
+          haloColor: "#991f17",
+          font: {
+            family: "Noto Sans",
+            size: 9,
+            weight: "bold"
+          }
+        })
+      })
+    ];
   }
 
   async function createClusterRenderer(layer: FeatureLayer): Promise<__esri.ClassBreaksRenderer> {
@@ -289,6 +392,8 @@ import Slider from "@arcgis/core/widgets/Slider";
   updateAggregateLayer();
   view.watch("scale", () => {
     updateAggregateLayer();
+    console.log("zoom: ", view.zoom)
+    console.log("scale: ", view.scale)
     console.log(view.size)  // width, height
     console.log(view.extent)
     console.log(view.resolution)
@@ -299,7 +404,11 @@ import Slider from "@arcgis/core/widgets/Slider";
       updateAggregateLayer(true);
     }
   });
-  clusteringEnabledElement.addEventListener("calciteSwitchChange", ()=> {
+  clusteringEnabledElement.addEventListener("calciteSwitchChange", () => {
+    updateAggregateLayer(true);
+  });
+
+  variableSelectElement.addEventListener("calciteSelectChange", () => {
     updateAggregateLayer(true);
   });
 
