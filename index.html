@@ -18,17 +18,28 @@
       <calcite-label>Clustering enabled<calcite-switch id="clustering-enabled" scale="m"></calcite-switch>
       </calcite-label>
       <div>
-        <calcite-select id="variable-select">
-          <calcite-option-group label="field">
-              <calcite-option value="Count" selected>Count</calcite-option>
-              <calcite-option value="total_injured">Total injured</calcite-option>
-              <calcite-option value="total_killed">Total killed</calcite-option>
-              <calcite-option value="pedestrians_killed">Pedestrians killed</calcite-option>
-              <calcite-option value="cyclists_killed">Cyclists killed</calcite-option>
-              <calcite-option value="motorists_killed">Motorists killed</calcite-option>
-              <calcite-option value="predominance">Predominance</calcite-option>
-          </calcite-option-group>
-      </calcite-select>
+        <calcite-label> Variable
+          <calcite-select id="variable-select">
+            <calcite-option value="Count" selected>Count</calcite-option>
+            <calcite-option value="total_injured">Total injured</calcite-option>
+            <calcite-option value="total_killed">Total killed</calcite-option>
+            <calcite-option value="pedestrians_killed">Pedestrians killed</calcite-option>
+            <calcite-option value="cyclists_killed">Cyclists killed</calcite-option>
+            <calcite-option value="motorists_killed">Motorists killed</calcite-option>
+            <calcite-option value="predominance">Predominance</calcite-option>
+          </calcite-select>
+        </calcite-label>
+      </div>
+      <div>
+        <calcite-label> Theme
+          <calcite-select id="theme-select">
+            <calcite-option value="high-to-low" selected>High to low</calcite-option>
+            <calcite-option value="above">Above average</calcite-option>
+            <calcite-option value="below">Below average</calcite-option>
+            <calcite-option value="above-and-below">Above and below</calcite-option>
+            <calcite-option value="extremes">Extremes</calcite-option>
+          </calcite-select>
+        </calcite-label>
       </div>
     </div>
     <script type="module" src="/app/main.ts"></script>

@@ -106,6 +106,7 @@ import Legend from "@arcgis/core/widgets/Legend";
 
   const clusteringEnabledElement = document.getElementById("clustering-enabled") as HTMLInputElement;
   const variableSelectElement = document.getElementById("variable-select") as HTMLSelectElement;
+  const themeSelectElement = document.getElementById("theme-select") as HTMLSelectElement;
 
   const slider = new Slider({
     values: [0],
@@ -257,8 +258,12 @@ import Legend from "@arcgis/core/widgets/Legend";
 
     if(field === "predominance"){
       const renderer = createPredominanceRenderer(layer);
+      themeSelectElement.disabled = true;
       return renderer;
     }
+
+    themeSelectElement.disabled = false;
+    const theme = themeSelectElement.value as any;
 
     const colorScheme = getSchemeByName({
       geometryType: "polygon",
@@ -268,20 +273,15 @@ import Legend from "@arcgis/core/widgets/Legend";
     const { renderer } = await colorRendererCreator.createContinuousRenderer({
       layer,
       field,  // Count | total_killed
-      // normalizationField: "Count",
+      // normalizationField: "total_killed",
       view,
-      theme: "high-to-low",
-      colorScheme
+      theme,
+      colorScheme: theme !== "above-and-below" && theme !== "extremes" ? colorScheme : null as any
     });
     return renderer;
   }
 
   async function createPredominanceRenderer(layer: FeatureLayer): Promise<__esri.UniqueValueRenderer> {
-    // const colorScheme = getSchemeByName({
-    //   geometryType: "polygon",
-    //   name: "Red 7",  // Pink 6 | Forest Dusk
-    //   theme: "high-to-low"
-    // })
     const { renderer } = await predominanceRendererCreator.createRenderer({
       layer,
       view,
@@ -409,6 +409,10 @@ import Legend from "@arcgis/core/widgets/Legend";
   });
 
   variableSelectElement.addEventListener("calciteSelectChange", () => {
+    updateAggregateLayer(true);
+  });
+
+  themeSelectElement.addEventListener("calciteSelectChange", () => {
     updateAggregateLayer(true);
   });
 
